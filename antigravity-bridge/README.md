@@ -22,7 +22,7 @@ python3 antigravity_bridge.py --port 8000
 
 ### 2. Run with specified profile order:
 ```bash
-python3 antigravity_bridge.py --port 8000 --profiles astrathezero,attasitgits,mrsermshop
+python3 antigravity_bridge.py --port 8000 --profiles profile1,profile2,profile3
 ```
 
 ---

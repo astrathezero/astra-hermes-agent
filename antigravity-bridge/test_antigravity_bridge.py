@@ -47,11 +47,11 @@ class TestAntigravityBridge(unittest.TestCase):
         mock_proc.communicate.return_value = ("CLI execution output", "")
         mock_popen.return_value = mock_proc
 
-        output = execute_cli_command('echo "{prompt}"', "Hello world", profile="astrathezero")
+        output = execute_cli_command('echo "{prompt}"', "Hello world", profile="test_profile")
         self.assertEqual(output, "CLI execution output")
         mock_popen.assert_called_once()
         _, kwargs = mock_popen.call_args
-        self.assertEqual(kwargs.get("env", {}).get("ANTIGRAVITY_PROFILE"), "astrathezero")
+        self.assertEqual(kwargs.get("env", {}).get("ANTIGRAVITY_PROFILE"), "test_profile")
 
     def test_execute_cli_with_fallback_profile(self):
         """Test profile fallback when first profile fails and second succeeds."""
