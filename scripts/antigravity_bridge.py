@@ -141,6 +141,22 @@ def get_available_profiles() -> List[Optional[str]]:
     return [active] if active else [None]
 
 
+def parse_cmd_template(cmd_template: str, prompt_text: str) -> Tuple[List[str], str]:
+    """Parse command template into list of arguments for subprocess (shell=False)."""
+    if "{prompt}" in cmd_template:
+        placeholder = "__PROMPT_PLACEHOLDER__"
+        temp = (
+            cmd_template.replace('"{prompt}"', placeholder)
+            .replace("'{prompt}'", placeholder)
+            .replace("{prompt}", placeholder)
+        )
+        parts = shlex.split(temp)
+        argv = [prompt_text if p == placeholder else p for p in parts]
+        return argv, ""
+    else:
+        return shlex.split(cmd_template), prompt_text
+
+
 def execute_cli_command(
     cmd_template: str,
     prompt_text: str,
@@ -148,22 +164,18 @@ def execute_cli_command(
     profile: Optional[str] = None,
 ) -> str:
     """Execute local CLI command with prompt substitution or stdin piping for a given profile."""
-    if "{prompt}" in cmd_template:
-        cmd_str = cmd_template.replace("{prompt}", prompt_text)
-        stdin_input = ""
-    else:
-        cmd_str = cmd_template
-        stdin_input = prompt_text
+    argv, stdin_input = parse_cmd_template(cmd_template, prompt_text)
 
-    logger.info("Executing CLI command (profile=%s): %s", profile or "default", cmd_str[:120])
+    log_str = " ".join(argv)[:120] if argv else cmd_template[:120]
+    logger.info("Executing CLI command (profile=%s): %s", profile or "default", log_str)
 
     env = os.environ.copy()
     if profile:
         env["ANTIGRAVITY_PROFILE"] = profile
 
     proc = subprocess.Popen(
-        cmd_str,
-        shell=True,
+        argv,
+        shell=False,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
