@@ -31,7 +31,7 @@ class TestAntigravityBridge(unittest.TestCase):
 
     def test_detect_cli_command(self):
         """Test auto-detection of local CLI binary."""
-        with patch("shutil.which") as mock_which:
+        with patch("os.path.exists", return_value=False), patch("shutil.which") as mock_which:
             mock_which.side_effect = lambda bin_name: "/usr/local/bin/antigravity" if bin_name == "antigravity" else None
             binary, tpl = detect_cli_command()
             self.assertEqual(binary, "antigravity")

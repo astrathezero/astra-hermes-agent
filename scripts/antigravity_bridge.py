@@ -49,15 +49,20 @@ def detect_cli_command() -> Tuple[str, str]:
         binary = env_cmd.split()[0]
         return (binary, env_cmd)
 
+    # Check ~/.local/bin/agy explicitly before PATH
+    home_local_agy = os.path.expanduser("~/.local/bin/agy")
+    if os.path.exists(home_local_agy) and os.access(home_local_agy, os.X_OK):
+        return ("agy", f'{home_local_agy} -p "{{prompt}}"')
+
     agy_path = shutil.which("agy")
     if agy_path:
         return ("agy", 'agy -p "{prompt}"')
 
     anti_path = shutil.which("antigravity")
-    if anti_path:
+    if anti_path and anti_path != "/usr/bin/antigravity":
         return ("antigravity", 'antigravity -p "{prompt}"')
 
-    # Fallback to agy template if neither is found in PATH at startup
+    # Fallback default
     return ("agy", 'agy -p "{prompt}"')
 
 
