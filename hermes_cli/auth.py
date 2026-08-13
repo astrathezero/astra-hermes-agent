@@ -7100,6 +7100,8 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
     target = (provider_id or get_active_provider() or "").strip().lower()
     if not target:
         return {"logged_in": False}
+    if target in ("local-cli", "cli", "agy", "antigravity", "local-command"):
+        return {"logged_in": True, "provider": "local-cli", "auth_type": "none"}
     if target == "spotify":
         return get_spotify_auth_status()
     if target == "nous":

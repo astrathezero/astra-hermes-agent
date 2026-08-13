@@ -1702,6 +1702,16 @@ def resolve_runtime_provider(
                 f"(providers.{requested_provider}.enabled: false)"
             )
 
+    if requested_provider in ("local-cli", "cli", "agy", "antigravity", "local-command"):
+        return {
+            "provider": "local-cli",
+            "api_mode": "chat_completions",
+            "base_url": "cli://local",
+            "api_key": "none",
+            "source": "local-cli",
+            "requested_provider": requested_provider,
+        }
+
     if requested_provider == "moa":
         return {
             "provider": "moa",
