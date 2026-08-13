@@ -1560,7 +1560,7 @@ def is_runtime_provider_routable(provider_id: str) -> bool:
     normalized = (provider_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized in {"auto", "openrouter", "custom", "moa"}:
+    if normalized in {"auto", "openrouter", "custom", "moa", "local-cli", "cli", "agy", "antigravity", "local-command"}:
         return True
     if normalized.startswith("custom:"):
         return True
@@ -2116,6 +2116,8 @@ def resolve_provider(
         return "openrouter"
     if normalized == "custom":
         return "custom"
+    if normalized in ("local-cli", "cli", "agy", "antigravity", "local-command"):
+        return "local-cli"
     if normalized in PROVIDER_REGISTRY:
         return normalized
     if normalized != "auto":
