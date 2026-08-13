@@ -52,18 +52,18 @@ def detect_cli_command() -> Tuple[str, str]:
     # Check ~/.local/bin/agy explicitly before PATH
     home_local_agy = os.path.expanduser("~/.local/bin/agy")
     if os.path.exists(home_local_agy) and os.access(home_local_agy, os.X_OK):
-        return ("agy", f'{home_local_agy} -p "{{prompt}}"')
+        return ("agy", f'{home_local_agy} --dangerously-skip-permissions -p "{{prompt}}"')
 
     agy_path = shutil.which("agy")
     if agy_path:
-        return ("agy", 'agy -p "{prompt}"')
+        return ("agy", 'agy --dangerously-skip-permissions -p "{prompt}"')
 
     anti_path = shutil.which("antigravity")
     if anti_path and anti_path != "/usr/bin/antigravity":
-        return ("antigravity", 'antigravity -p "{prompt}"')
+        return ("antigravity", 'antigravity --dangerously-skip-permissions -p "{prompt}"')
 
     # Fallback default
-    return ("agy", 'agy -p "{prompt}"')
+    return ("agy", 'agy --dangerously-skip-permissions -p "{prompt}"')
 
 
 def format_messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
@@ -216,7 +216,13 @@ def execute_cli_command(
         logger.error("CLI execution failed for profile '%s' (code %d): %s", profile or "default", proc.returncode, err_msg)
         raise RuntimeError(f"CLI Execution Error (profile={profile or 'default'}): {err_msg}")
 
-    return stdout_data.strip()
+    output_text = stdout_data.strip() or stderr_data.strip()
+    if not output_text:
+        err_hint = stderr_data.strip() or stdout_data.strip() or "Empty stdout/stderr"
+        logger.error("CLI execution returned empty output for profile '%s': %s", profile or "default", err_hint)
+        raise RuntimeError(f"CLI Execution returned empty output for profile '{profile or 'default'}': {err_hint}")
+
+    return output_text
 
 
 def execute_cli_with_fallback(

@@ -37,7 +37,7 @@ class TestAntigravityBridge(unittest.TestCase):
             mock_which.side_effect = lambda bin_name: "/usr/local/bin/antigravity" if bin_name == "antigravity" else None
             binary, tpl = detect_cli_command()
             self.assertEqual(binary, "antigravity")
-            self.assertIn("antigravity -p", tpl)
+            self.assertIn("antigravity --dangerously-skip-permissions -p", tpl)
 
     @patch("subprocess.Popen")
     def test_execute_cli_command_with_profile(self, mock_popen):
