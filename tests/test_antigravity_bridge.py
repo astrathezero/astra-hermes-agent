@@ -12,7 +12,9 @@ from scripts.antigravity_bridge import (
     ThreadedHTTPServer,
     detect_cli_command,
     execute_cli_command,
+    execute_cli_with_fallback,
     format_messages_to_prompt,
+    get_available_profiles,
 )
 
 
@@ -38,20 +40,37 @@ class TestAntigravityBridge(unittest.TestCase):
             self.assertIn("antigravity -p", tpl)
 
     @patch("subprocess.Popen")
-    def test_execute_cli_command(self, mock_popen):
-        """Test CLI command execution with prompt substitution."""
+    def test_execute_cli_command_with_profile(self, mock_popen):
+        """Test CLI command execution with ANTIGRAVITY_PROFILE env setting."""
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.communicate.return_value = ("CLI execution output", "")
         mock_popen.return_value = mock_proc
 
-        output = execute_cli_command('echo "{prompt}"', "Hello world")
+        output = execute_cli_command('echo "{prompt}"', "Hello world", profile="astrathezero")
         self.assertEqual(output, "CLI execution output")
         mock_popen.assert_called_once()
+        _, kwargs = mock_popen.call_args
+        self.assertEqual(kwargs.get("env", {}).get("ANTIGRAVITY_PROFILE"), "astrathezero")
+
+    def test_execute_cli_with_fallback_profile(self):
+        """Test profile fallback when first profile fails and second succeeds."""
+        def side_effect(cmd, prompt, timeout=180.0, profile=None):
+            if profile == "p1":
+                raise RuntimeError("Rate limit on p1")
+            if profile == "p2":
+                return "Output from p2"
+            raise RuntimeError("Unknown profile")
+
+        with patch("scripts.antigravity_bridge.execute_cli_command", side_effect=side_effect):
+            output, used_profile = execute_cli_with_fallback('echo "{prompt}"', "test", profiles=["p1", "p2"])
+            self.assertEqual(output, "Output from p2")
+            self.assertEqual(used_profile, "p2")
 
     def test_server_http_endpoints(self):
         """Test HTTP server endpoints /health, /v1/models, and /v1/chat/completions."""
         server = ThreadedHTTPServer(("127.0.0.1", 0), AntigravityBridgeHandler)
+        server.profiles = ["default_test"]
         port = server.server_port
 
         import threading

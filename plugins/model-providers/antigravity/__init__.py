@@ -16,7 +16,7 @@ class AntigravityProfile(ProviderProfile):
 
 antigravity = AntigravityProfile(
     name="antigravity",
-    aliases=("agy", "local-bridge", "antigravity-bridge"),
+    aliases=("agy", "agy-cli", "local-bridge", "antigravity-bridge"),
     display_name="Antigravity Local Bridge",
     description="Local OpenAI REST API Bridge for antigravity / agy (http://127.0.0.1:8000/v1)",
     auth_type="api_key",

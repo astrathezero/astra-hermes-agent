@@ -111,12 +111,43 @@ def format_messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def get_available_profiles() -> List[Optional[str]]:
+    """Get list of available Antigravity / agy login profiles for fallback.
+
+    Checks ANTIGRAVITY_PROFILES env var (comma-separated), or scans
+    ~/.config/antigravity/profiles/ directory.
+    If no extra profiles are found, returns [None] (default profile).
+    """
+    env_profiles = os.environ.get("ANTIGRAVITY_PROFILES", "").strip()
+    if env_profiles:
+        profiles = [p.strip() for p in env_profiles.split(",") if p.strip()]
+        if profiles:
+            return profiles
+
+    profiles_dir = os.path.expanduser("~/.config/antigravity/profiles")
+    if os.path.exists(profiles_dir) and os.path.isdir(profiles_dir):
+        found = [
+            d for d in sorted(os.listdir(profiles_dir))
+            if os.path.isdir(os.path.join(profiles_dir, d)) and not d.startswith(".")
+        ]
+        if found:
+            active = os.environ.get("ANTIGRAVITY_PROFILE", "").strip()
+            if active and active in found:
+                found.remove(active)
+                found.insert(0, active)
+            return found
+
+    active = os.environ.get("ANTIGRAVITY_PROFILE", "").strip()
+    return [active] if active else [None]
+
+
 def execute_cli_command(
     cmd_template: str,
     prompt_text: str,
     timeout: float = 180.0,
+    profile: Optional[str] = None,
 ) -> str:
-    """Execute local CLI command with prompt substitution or stdin piping."""
+    """Execute local CLI command with prompt substitution or stdin piping for a given profile."""
     if "{prompt}" in cmd_template:
         cmd_str = cmd_template.replace("{prompt}", prompt_text)
         stdin_input = ""
@@ -124,7 +155,11 @@ def execute_cli_command(
         cmd_str = cmd_template
         stdin_input = prompt_text
 
-    logger.info("Executing CLI command: %s", cmd_str[:120])
+    logger.info("Executing CLI command (profile=%s): %s", profile or "default", cmd_str[:120])
+
+    env = os.environ.copy()
+    if profile:
+        env["ANTIGRAVITY_PROFILE"] = profile
 
     proc = subprocess.Popen(
         cmd_str,
@@ -133,57 +168,44 @@ def execute_cli_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=env,
     )
     try:
         stdout_data, stderr_data = proc.communicate(input=stdin_input, timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         stdout_data, stderr_data = proc.communicate()
-        raise RuntimeError("CLI Execution Timeout")
+        raise RuntimeError(f"CLI Execution Timeout (profile={profile or 'default'})")
 
     if proc.returncode != 0:
         err_msg = stderr_data.strip() or stdout_data.strip() or f"Exit code {proc.returncode}"
-        logger.error("CLI execution failed (code %d): %s", proc.returncode, err_msg)
-        raise RuntimeError(f"CLI Execution Error: {err_msg}")
+        logger.error("CLI execution failed for profile '%s' (code %d): %s", profile or "default", proc.returncode, err_msg)
+        raise RuntimeError(f"CLI Execution Error (profile={profile or 'default'}): {err_msg}")
 
     return stdout_data.strip()
 
 
-def proxy_to_upstream(
-    req_json: Dict[str, Any],
-    fallback_url: str = "https://aiapirouter.mrserm.com/v1",
-    fallback_key: Optional[str] = None,
-    fallback_model: str = "ocg/deepseek-v4-flash",
-) -> Dict[str, Any]:
-    """Proxy OpenAI chat completions request to upstream router as fallback."""
-    import urllib.request
+def execute_cli_with_fallback(
+    cmd_template: str,
+    prompt_text: str,
+    timeout: float = 180.0,
+    profiles: Optional[List[Optional[str]]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Execute CLI command trying profiles sequentially until one succeeds."""
+    if profiles is None:
+        profiles = get_available_profiles()
 
-    url = os.environ.get("ANTIGRAVITY_FALLBACK_URL", fallback_url).strip()
-    if not url.endswith("/chat/completions"):
-        url = url.rstrip("/") + "/chat/completions"
+    errors: List[str] = []
+    for profile in profiles:
+        try:
+            logger.info("Attempting CLI execution with profile: %s", profile or "default")
+            output = execute_cli_command(cmd_template, prompt_text, timeout=timeout, profile=profile)
+            return output, profile
+        except Exception as exc:
+            logger.warning("Profile '%s' execution failed: %s", profile or "default", exc)
+            errors.append(f"Profile '{profile or 'default'}': {exc}")
 
-    api_key = (
-        os.environ.get("ANTIGRAVITY_FALLBACK_KEY")
-        or os.environ.get("CUSTOM_API_KEY")
-        or fallback_key
-        or ""
-    ).strip()
-
-    payload = dict(req_json)
-    if payload.get("model") in ("antigravity", "agy", "local-cli"):
-        payload["model"] = os.environ.get("ANTIGRAVITY_FALLBACK_MODEL", fallback_model)
-
-    data_bytes = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}" if api_key else "",
-    }
-
-    logger.info("Proxying request to fallback upstream router: %s (model=%s)", url, payload.get("model"))
-    req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=120.0) as resp:
-        resp_body = resp.read().decode("utf-8")
-        return json.loads(resp_body)
+    raise RuntimeError(f"All agy profile execution attempts failed. Details: {'; '.join(errors)}")
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -224,6 +246,7 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
                 "service": "antigravity-bridge",
                 "cli_detected": cli_bin,
                 "command_template": cmd_tpl,
+                "available_profiles": get_available_profiles(),
             })
             return
 
@@ -282,22 +305,15 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
         prompt_text = format_messages_to_prompt(messages)
         cli_bin, cmd_tpl = detect_cli_command()
         custom_tpl = getattr(self.server, "custom_cmd", None) or cmd_tpl
+        configured_profiles = getattr(self.server, "profiles", None)
 
         try:
-            output_text = execute_cli_command(custom_tpl, prompt_text)
+            output_text, used_profile = execute_cli_with_fallback(
+                custom_tpl, prompt_text, profiles=configured_profiles
+            )
+            logger.info("Successfully executed CLI using profile: %s", used_profile or "default")
         except Exception as exc:
-            logger.warning("Local CLI execution failed: %s. Attempting fallback upstream proxy...", exc)
-            fallback_url = getattr(self.server, "fallback_url", None) or os.environ.get("ANTIGRAVITY_FALLBACK_URL", "https://aiapirouter.mrserm.com/v1")
-            fallback_key = getattr(self.server, "fallback_key", None) or os.environ.get("ANTIGRAVITY_FALLBACK_KEY") or os.environ.get("CUSTOM_API_KEY")
-
-            if fallback_url:
-                try:
-                    upstream_resp = proxy_to_upstream(req_json, fallback_url=fallback_url, fallback_key=fallback_key)
-                    self._send_json_response(upstream_resp)
-                    return
-                except Exception as fb_exc:
-                    logger.error("Upstream fallback failed: %s", fb_exc)
-
+            logger.error("All agy profile attempts failed: %s", exc)
             self._send_json_response(
                 {"error": {"message": str(exc), "type": "api_error"}},
                 status_code=500,
@@ -383,25 +399,24 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     parser.add_argument("--cmd", default=None, help="Custom CLI command template (e.g. 'agy -p \"{prompt}\"')")
-    parser.add_argument("--fallback-url", default=os.environ.get("ANTIGRAVITY_FALLBACK_URL", "https://aiapirouter.mrserm.com/v1"), help="Upstream fallback API router URL")
-    parser.add_argument("--fallback-key", default=os.environ.get("ANTIGRAVITY_FALLBACK_KEY") or os.environ.get("CUSTOM_API_KEY"), help="Upstream fallback API key")
+    parser.add_argument("--profiles", default=None, help="Comma-separated list of profile names to try for fallback")
 
     args = parser.parse_args()
 
     cli_bin, cmd_tpl = detect_cli_command()
     effective_cmd = args.cmd or cmd_tpl
 
+    configured_profiles = [p.strip() for p in args.profiles.split(",") if p.strip()] if args.profiles else get_available_profiles()
+
     logger.info("Starting Antigravity API Bridge Server...")
     logger.info("Detected CLI Binary: %s", cli_bin)
     logger.info("Command Template:   %s", effective_cmd)
-    if args.fallback_url:
-        logger.info("Upstream Fallback:  %s", args.fallback_url)
+    logger.info("Configured Profiles: %s", configured_profiles)
     logger.info("Listening on:       http://%s:%d/v1", args.host, args.port)
 
     server = ThreadedHTTPServer((args.host, args.port), AntigravityBridgeHandler)
     server.custom_cmd = effective_cmd
-    server.fallback_url = args.fallback_url
-    server.fallback_key = args.fallback_key
+    server.profiles = configured_profiles
 
     try:
         server.serve_forever()
