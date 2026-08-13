@@ -55,7 +55,7 @@ class TestAntigravityBridge(unittest.TestCase):
 
     def test_execute_cli_with_fallback_profile(self):
         """Test profile fallback when first profile fails and second succeeds."""
-        def side_effect(cmd, prompt, timeout=180.0, profile=None):
+        def side_effect(cmd, prompt, timeout=180.0, profile=None, **kwargs):
             if profile == "p1":
                 raise RuntimeError("Rate limit on p1")
             if profile == "p2":
