@@ -211,6 +211,7 @@ def execute_cli_with_fallback(
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP server for handling concurrent API calls."""
     daemon_threads = True
+    allow_reuse_address = True
 
 
 class AntigravityBridgeHandler(BaseHTTPRequestHandler):
