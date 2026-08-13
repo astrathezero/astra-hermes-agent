@@ -52,18 +52,18 @@ def detect_cli_command() -> Tuple[str, str]:
     # Check ~/.local/bin/agy explicitly before PATH
     home_local_agy = os.path.expanduser("~/.local/bin/agy")
     if os.path.exists(home_local_agy) and os.access(home_local_agy, os.X_OK):
-        return ("agy", f"{home_local_agy} -p -")
+        return ("agy", f'{home_local_agy} -p "{{prompt}}"')
 
     agy_path = shutil.which("agy")
     if agy_path:
-        return ("agy", "agy -p -")
+        return ("agy", 'agy -p "{prompt}"')
 
     anti_path = shutil.which("antigravity")
     if anti_path and anti_path != "/usr/bin/antigravity":
-        return ("antigravity", "antigravity -p -")
+        return ("antigravity", 'antigravity -p "{prompt}"')
 
     # Fallback default
-    return ("agy", "agy -p -")
+    return ("agy", 'agy -p "{prompt}"')
 
 
 def format_messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
@@ -141,21 +141,42 @@ def get_available_profiles() -> List[Optional[str]]:
     return [active] if active else [None]
 
 
+def sanitize_prompt_for_cli(prompt_text: str, max_bytes: int = 115000) -> str:
+    """Ensure prompt string fits within OS single CLI argument limits (115KB)."""
+    encoded = prompt_text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return prompt_text
+
+    logger.warning("Prompt size (%d bytes) exceeds CLI arg limit (%d bytes). Truncating context...", len(encoded), max_bytes)
+
+    head_size = max_bytes // 3
+    tail_size = (max_bytes * 2) // 3 - 100
+
+    head_str = encoded[:head_size].decode("utf-8", errors="ignore")
+    tail_str = encoded[-tail_size:].decode("utf-8", errors="ignore")
+
+    return f"{head_str}\n\n...[Middle context truncated for CLI argument limits]...\n\n{tail_str}"
+
+
 def parse_cmd_template(cmd_template: str, prompt_text: str) -> Tuple[List[str], str]:
     """Parse command template into list of arguments for subprocess (shell=False)."""
+    sanitized_prompt = sanitize_prompt_for_cli(prompt_text)
     if "{prompt}" in cmd_template:
-        clean_tpl = (
-            cmd_template.replace('"{prompt}"', '-')
-            .replace("'{prompt}'", '-')
-            .replace("{prompt}", '-')
+        placeholder = "__PROMPT_PLACEHOLDER__"
+        temp = (
+            cmd_template.replace('"{prompt}"', placeholder)
+            .replace("'{prompt}'", placeholder)
+            .replace("{prompt}", placeholder)
         )
-        argv = shlex.split(clean_tpl)
-        return argv, prompt_text
+        parts = shlex.split(temp)
+        argv = [sanitized_prompt if p == placeholder else p for p in parts]
+        return argv, ""
     else:
         argv = shlex.split(cmd_template)
         if argv and argv[-1] in ("-p", "--print"):
-            argv.append("-")
-        return argv, prompt_text
+            argv.append(sanitized_prompt)
+            return argv, ""
+        return argv, sanitized_prompt
 
 
 def execute_cli_command(
