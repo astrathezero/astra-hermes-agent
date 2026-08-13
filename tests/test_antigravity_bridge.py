@@ -35,7 +35,7 @@ class TestAntigravityBridge(unittest.TestCase):
             mock_which.side_effect = lambda bin_name: "/usr/local/bin/antigravity" if bin_name == "antigravity" else None
             binary, tpl = detect_cli_command()
             self.assertEqual(binary, "antigravity")
-            self.assertIn("antigravity chat", tpl)
+            self.assertIn("antigravity -p", tpl)
 
     @patch("subprocess.run")
     def test_execute_cli_command(self, mock_run):

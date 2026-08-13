@@ -49,13 +49,13 @@ def detect_cli_command() -> Tuple[str, str]:
         binary = env_cmd.split()[0]
         return (binary, env_cmd)
 
-    anti_path = shutil.which("antigravity")
-    if anti_path:
-        return ("antigravity", 'antigravity chat "{prompt}"')
-
     agy_path = shutil.which("agy")
     if agy_path:
         return ("agy", 'agy -p "{prompt}"')
+
+    anti_path = shutil.which("antigravity")
+    if anti_path:
+        return ("antigravity", 'antigravity -p "{prompt}"')
 
     # Fallback to agy template if neither is found in PATH at startup
     return ("agy", 'agy -p "{prompt}"')
@@ -112,31 +112,63 @@ def execute_cli_command(
     timeout: float = 180.0,
 ) -> str:
     """Execute local CLI command with prompt substitution or stdin piping."""
-    devnull_f = open(os.devnull, "r")
-    try:
-        if "{prompt}" in cmd_template:
-            cmd_str = cmd_template.replace("{prompt}", prompt_text)
-            logger.info("Executing CLI command: %s", cmd_str[:120])
-            proc = subprocess.run(
-                cmd_str,
-                shell=True,
-                stdin=devnull_f,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        else:
-            logger.info("Executing CLI via stdin: %s", cmd_template)
-            proc = subprocess.run(
-                cmd_template,
-                shell=True,
-                input=prompt_text,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-    finally:
-        devnull_f.close()
+    cmd_str = cmd_template.replace("{prompt}", prompt_text) if "{prompt}" in cmd_template else cmd_template
+    logger.info("Executing CLI command: %s", cmd_str[:120])
+
+    proc = None
+    # Try PTY on POSIX systems to provide a real pseudo-terminal for Node.js
+    if hasattr(os, "name") and os.name == "posix":
+        try:
+            import pty
+            master, slave = pty.openpty()
+            try:
+                if "{prompt}" in cmd_template:
+                    proc = subprocess.run(
+                        cmd_str,
+                        shell=True,
+                        stdin=slave,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                else:
+                    proc = subprocess.run(
+                        cmd_template,
+                        shell=True,
+                        input=prompt_text,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+            finally:
+                os.close(master)
+                os.close(slave)
+        except Exception as pty_exc:
+            logger.debug("PTY execution fallback: %s", pty_exc)
+
+    if proc is None:
+        devnull_f = open(os.devnull, "r")
+        try:
+            if "{prompt}" in cmd_template:
+                proc = subprocess.run(
+                    cmd_str,
+                    shell=True,
+                    stdin=devnull_f,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            else:
+                proc = subprocess.run(
+                    cmd_template,
+                    shell=True,
+                    input=prompt_text,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+        finally:
+            devnull_f.close()
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
