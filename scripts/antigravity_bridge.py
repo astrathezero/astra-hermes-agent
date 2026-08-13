@@ -116,59 +116,40 @@ def execute_cli_command(
     logger.info("Executing CLI command: %s", cmd_str[:120])
 
     proc = None
-    # Try PTY on POSIX systems to provide a real pseudo-terminal for Node.js
+    # 1. Try PTY execution on POSIX systems (Linux/macOS) to satisfy Node.js tty.ReadStream(0)
     if hasattr(os, "name") and os.name == "posix":
         try:
             import pty
             master, slave = pty.openpty()
             try:
-                if "{prompt}" in cmd_template:
-                    proc = subprocess.run(
-                        cmd_str,
-                        shell=True,
-                        stdin=slave,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
-                else:
-                    proc = subprocess.run(
-                        cmd_template,
-                        shell=True,
-                        input=prompt_text,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
+                proc = subprocess.run(
+                    cmd_str,
+                    shell=True,
+                    stdin=slave,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
             finally:
                 os.close(master)
                 os.close(slave)
         except Exception as pty_exc:
-            logger.debug("PTY execution fallback: %s", pty_exc)
+            logger.warning("PTY execution failed, trying O_RDWR devnull fallback: %s", pty_exc)
 
+    # 2. Fallback to os.open(os.devnull, os.O_RDWR)
     if proc is None:
-        devnull_f = open(os.devnull, "r")
+        devnull_fd = os.open(os.devnull, os.O_RDWR)
         try:
-            if "{prompt}" in cmd_template:
-                proc = subprocess.run(
-                    cmd_str,
-                    shell=True,
-                    stdin=devnull_f,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-            else:
-                proc = subprocess.run(
-                    cmd_template,
-                    shell=True,
-                    input=prompt_text,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
+            proc = subprocess.run(
+                cmd_str,
+                shell=True,
+                stdin=devnull_fd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
         finally:
-            devnull_f.close()
+            os.close(devnull_fd)
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
