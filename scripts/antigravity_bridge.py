@@ -112,51 +112,36 @@ def execute_cli_command(
     timeout: float = 180.0,
 ) -> str:
     """Execute local CLI command with prompt substitution or stdin piping."""
-    cmd_str = cmd_template.replace("{prompt}", prompt_text) if "{prompt}" in cmd_template else cmd_template
+    if "{prompt}" in cmd_template:
+        cmd_str = cmd_template.replace("{prompt}", prompt_text)
+        stdin_input = ""
+    else:
+        cmd_str = cmd_template
+        stdin_input = prompt_text
+
     logger.info("Executing CLI command: %s", cmd_str[:120])
 
-    proc = None
-    # 1. Try PTY execution on POSIX systems (Linux/macOS) to satisfy Node.js tty.ReadStream(0)
-    if hasattr(os, "name") and os.name == "posix":
-        try:
-            import pty
-            master, slave = pty.openpty()
-            try:
-                proc = subprocess.run(
-                    cmd_str,
-                    shell=True,
-                    stdin=slave,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-            finally:
-                os.close(master)
-                os.close(slave)
-        except Exception as pty_exc:
-            logger.warning("PTY execution failed, trying O_RDWR devnull fallback: %s", pty_exc)
-
-    # 2. Fallback to os.open(os.devnull, os.O_RDWR)
-    if proc is None:
-        devnull_fd = os.open(os.devnull, os.O_RDWR)
-        try:
-            proc = subprocess.run(
-                cmd_str,
-                shell=True,
-                stdin=devnull_fd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        finally:
-            os.close(devnull_fd)
+    proc = subprocess.Popen(
+        cmd_str,
+        shell=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout_data, stderr_data = proc.communicate(input=stdin_input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout_data, stderr_data = proc.communicate()
+        raise RuntimeError("CLI Execution Timeout")
 
     if proc.returncode != 0:
-        err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
+        err_msg = stderr_data.strip() or stdout_data.strip() or f"Exit code {proc.returncode}"
         logger.error("CLI execution failed (code %d): %s", proc.returncode, err_msg)
         raise RuntimeError(f"CLI Execution Error: {err_msg}")
 
-    return proc.stdout.strip()
+    return stdout_data.strip()
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):

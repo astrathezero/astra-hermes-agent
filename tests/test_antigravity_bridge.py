@@ -37,17 +37,17 @@ class TestAntigravityBridge(unittest.TestCase):
             self.assertEqual(binary, "antigravity")
             self.assertIn("antigravity -p", tpl)
 
-    @patch("subprocess.run")
-    def test_execute_cli_command(self, mock_run):
+    @patch("subprocess.Popen")
+    def test_execute_cli_command(self, mock_popen):
         """Test CLI command execution with prompt substitution."""
         mock_proc = MagicMock()
         mock_proc.returncode = 0
-        mock_proc.stdout = "CLI execution output"
-        mock_run.return_value = mock_proc
+        mock_proc.communicate.return_value = ("CLI execution output", "")
+        mock_popen.return_value = mock_proc
 
         output = execute_cli_command('echo "{prompt}"', "Hello world")
         self.assertEqual(output, "CLI execution output")
-        mock_run.assert_called_once()
+        mock_popen.assert_called_once()
 
     def test_server_http_endpoints(self):
         """Test HTTP server endpoints /health, /v1/models, and /v1/chat/completions."""
