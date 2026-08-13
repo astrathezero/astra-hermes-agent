@@ -118,6 +118,7 @@ def execute_cli_command(
         proc = subprocess.run(
             cmd_str,
             shell=True,
+            input="",
             capture_output=True,
             text=True,
             timeout=timeout,
