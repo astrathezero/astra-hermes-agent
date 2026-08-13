@@ -52,18 +52,18 @@ def detect_cli_command() -> Tuple[str, str]:
     # Check ~/.local/bin/agy explicitly before PATH
     home_local_agy = os.path.expanduser("~/.local/bin/agy")
     if os.path.exists(home_local_agy) and os.access(home_local_agy, os.X_OK):
-        return ("agy", f'{home_local_agy} -p "{{prompt}}"')
+        return ("agy", f"{home_local_agy} -p -")
 
     agy_path = shutil.which("agy")
     if agy_path:
-        return ("agy", 'agy -p "{prompt}"')
+        return ("agy", "agy -p -")
 
     anti_path = shutil.which("antigravity")
     if anti_path and anti_path != "/usr/bin/antigravity":
-        return ("antigravity", 'antigravity -p "{prompt}"')
+        return ("antigravity", "antigravity -p -")
 
     # Fallback default
-    return ("agy", 'agy -p "{prompt}"')
+    return ("agy", "agy -p -")
 
 
 def format_messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
@@ -144,17 +144,18 @@ def get_available_profiles() -> List[Optional[str]]:
 def parse_cmd_template(cmd_template: str, prompt_text: str) -> Tuple[List[str], str]:
     """Parse command template into list of arguments for subprocess (shell=False)."""
     if "{prompt}" in cmd_template:
-        placeholder = "__PROMPT_PLACEHOLDER__"
-        temp = (
-            cmd_template.replace('"{prompt}"', placeholder)
-            .replace("'{prompt}'", placeholder)
-            .replace("{prompt}", placeholder)
+        clean_tpl = (
+            cmd_template.replace('"{prompt}"', '-')
+            .replace("'{prompt}'", '-')
+            .replace("{prompt}", '-')
         )
-        parts = shlex.split(temp)
-        argv = [prompt_text if p == placeholder else p for p in parts]
-        return argv, ""
+        argv = shlex.split(clean_tpl)
+        return argv, prompt_text
     else:
-        return shlex.split(cmd_template), prompt_text
+        argv = shlex.split(cmd_template)
+        if argv and argv[-1] in ("-p", "--print"):
+            argv.append("-")
+        return argv, prompt_text
 
 
 def execute_cli_command(
