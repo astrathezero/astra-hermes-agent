@@ -149,6 +149,43 @@ def execute_cli_command(
     return stdout_data.strip()
 
 
+def proxy_to_upstream(
+    req_json: Dict[str, Any],
+    fallback_url: str = "https://aiapirouter.mrserm.com/v1",
+    fallback_key: Optional[str] = None,
+    fallback_model: str = "ocg/deepseek-v4-flash",
+) -> Dict[str, Any]:
+    """Proxy OpenAI chat completions request to upstream router as fallback."""
+    import urllib.request
+
+    url = os.environ.get("ANTIGRAVITY_FALLBACK_URL", fallback_url).strip()
+    if not url.endswith("/chat/completions"):
+        url = url.rstrip("/") + "/chat/completions"
+
+    api_key = (
+        os.environ.get("ANTIGRAVITY_FALLBACK_KEY")
+        or os.environ.get("CUSTOM_API_KEY")
+        or fallback_key
+        or ""
+    ).strip()
+
+    payload = dict(req_json)
+    if payload.get("model") in ("antigravity", "agy", "local-cli"):
+        payload["model"] = os.environ.get("ANTIGRAVITY_FALLBACK_MODEL", fallback_model)
+
+    data_bytes = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}" if api_key else "",
+    }
+
+    logger.info("Proxying request to fallback upstream router: %s (model=%s)", url, payload.get("model"))
+    req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=120.0) as resp:
+        resp_body = resp.read().decode("utf-8")
+        return json.loads(resp_body)
+
+
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP server for handling concurrent API calls."""
     daemon_threads = True
@@ -244,14 +281,23 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
 
         prompt_text = format_messages_to_prompt(messages)
         cli_bin, cmd_tpl = detect_cli_command()
-
-        # Allow per-request custom template override if passed in extra args
         custom_tpl = getattr(self.server, "custom_cmd", None) or cmd_tpl
 
         try:
             output_text = execute_cli_command(custom_tpl, prompt_text)
         except Exception as exc:
-            logger.error("Chat completion error: %s", exc)
+            logger.warning("Local CLI execution failed: %s. Attempting fallback upstream proxy...", exc)
+            fallback_url = getattr(self.server, "fallback_url", None) or os.environ.get("ANTIGRAVITY_FALLBACK_URL", "https://aiapirouter.mrserm.com/v1")
+            fallback_key = getattr(self.server, "fallback_key", None) or os.environ.get("ANTIGRAVITY_FALLBACK_KEY") or os.environ.get("CUSTOM_API_KEY")
+
+            if fallback_url:
+                try:
+                    upstream_resp = proxy_to_upstream(req_json, fallback_url=fallback_url, fallback_key=fallback_key)
+                    self._send_json_response(upstream_resp)
+                    return
+                except Exception as fb_exc:
+                    logger.error("Upstream fallback failed: %s", fb_exc)
+
             self._send_json_response(
                 {"error": {"message": str(exc), "type": "api_error"}},
                 status_code=500,
@@ -337,6 +383,8 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     parser.add_argument("--cmd", default=None, help="Custom CLI command template (e.g. 'agy -p \"{prompt}\"')")
+    parser.add_argument("--fallback-url", default=os.environ.get("ANTIGRAVITY_FALLBACK_URL", "https://aiapirouter.mrserm.com/v1"), help="Upstream fallback API router URL")
+    parser.add_argument("--fallback-key", default=os.environ.get("ANTIGRAVITY_FALLBACK_KEY") or os.environ.get("CUSTOM_API_KEY"), help="Upstream fallback API key")
 
     args = parser.parse_args()
 
@@ -346,10 +394,14 @@ def main():
     logger.info("Starting Antigravity API Bridge Server...")
     logger.info("Detected CLI Binary: %s", cli_bin)
     logger.info("Command Template:   %s", effective_cmd)
+    if args.fallback_url:
+        logger.info("Upstream Fallback:  %s", args.fallback_url)
     logger.info("Listening on:       http://%s:%d/v1", args.host, args.port)
 
     server = ThreadedHTTPServer((args.host, args.port), AntigravityBridgeHandler)
     server.custom_cmd = effective_cmd
+    server.fallback_url = args.fallback_url
+    server.fallback_key = args.fallback_key
 
     try:
         server.serve_forever()
