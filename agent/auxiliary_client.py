@@ -579,6 +579,10 @@ _PROVIDER_ALIASES = {
     "tokenhub": "tencent-tokenhub",
     "tencent-cloud": "tencent-tokenhub",
     "tencentmaas": "tencent-tokenhub",
+    "cli": "local-cli",
+    "agy": "local-cli",
+    "antigravity": "local-cli",
+    "local-command": "local-cli",
 }
 
 
@@ -6267,6 +6271,13 @@ def resolve_provider_client(
         final_model = _normalize_resolved_model(model or default, provider)
         return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                 else (client, final_model))
+
+    # ── Local CLI (agy / antigravity / local-command) ────────────────
+    if provider in ("local-cli", "cli", "agy", "antigravity"):
+        from agent.local_cli_adapter import LocalCLIAuxiliaryClient
+        final_model = model or original_provider or "local-cli"
+        cli_client = LocalCLIAuxiliaryClient(model=final_model)
+        return (cli_client, final_model)
 
     # ── Custom endpoint (OPENAI_BASE_URL + OPENAI_API_KEY) ───────────
     if provider == "custom":
