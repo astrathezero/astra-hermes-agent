@@ -1560,7 +1560,7 @@ def is_runtime_provider_routable(provider_id: str) -> bool:
     normalized = (provider_id or "").strip().lower()
     if not normalized:
         return False
-    if normalized in {"auto", "openrouter", "custom", "moa", "local-cli", "cli", "agy", "antigravity", "local-command"}:
+    if normalized in {"auto", "openrouter", "custom", "moa"}:
         return True
     if normalized.startswith("custom:"):
         return True
@@ -2116,8 +2116,6 @@ def resolve_provider(
         return "openrouter"
     if normalized == "custom":
         return "custom"
-    if normalized in ("local-cli", "cli", "agy", "antigravity", "local-command"):
-        return "local-cli"
     if normalized in PROVIDER_REGISTRY:
         return normalized
     if normalized != "auto":
@@ -7100,8 +7098,6 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
     target = (provider_id or get_active_provider() or "").strip().lower()
     if not target:
         return {"logged_in": False}
-    if target in ("local-cli", "cli", "agy", "antigravity", "local-command"):
-        return {"logged_in": True, "provider": "local-cli", "auth_type": "none"}
     if target == "spotify":
         return get_spotify_auth_status()
     if target == "nous":

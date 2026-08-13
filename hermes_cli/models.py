@@ -2398,7 +2398,7 @@ def _fetch_novita_pricing(
 _KNOWN_PROVIDER_NAMES: set[str] = (
     set(_PROVIDER_LABELS.keys())
     | set(_PROVIDER_ALIASES.keys())
-    | {"openrouter", "custom", "local-cli", "cli", "agy", "antigravity", "local-command"}
+    | {"openrouter", "custom"}
 )
 
 

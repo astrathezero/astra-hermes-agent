@@ -1165,7 +1165,7 @@ def run_doctor(args):
                     PROVIDER_REGISTRY,
                     resolve_provider as _resolve_auth_provider,
                 )
-                known_providers = set(PROVIDER_REGISTRY.keys()) | {"openrouter", "custom", "auto", "moa", "local-cli", "cli", "agy", "antigravity", "local-command"}
+                known_providers = set(PROVIDER_REGISTRY.keys()) | {"openrouter", "custom", "auto", "moa"}
             except Exception:
                 _resolve_auth_provider = None
                 pass

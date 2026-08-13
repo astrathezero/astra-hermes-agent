@@ -548,8 +548,10 @@ def _dispatch_nonstreaming_api_request(agent, api_kwargs: dict, *, make_client):
                 invalidate_runtime_client(region)
             raise
         return normalize_converse_response(raw_response)
-    if (agent.provider or "").strip().lower() in ("moa", "local-cli", "cli", "agy", "antigravity", "local-command"):
-        # Virtual provider or local-cli adapter facade. Do not rebuild request-local client.
+    if agent.provider == "moa":
+        # MoA is a virtual chat-completions provider backed by the
+        # in-process MoAClient facade. Do not rebuild a request-local
+        # OpenAI client from the virtual runtime metadata.
         return agent.client.chat.completions.create(**api_kwargs)
     request_client = make_client("chat_completion_request")
     return request_client.chat.completions.create(**api_kwargs)

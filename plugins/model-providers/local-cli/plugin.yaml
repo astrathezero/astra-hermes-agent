@@ -1,4 +1,0 @@
-name: local-cli
-kind: model-provider
-version: 1.0.0
-description: "Local CLI model provider (e.g. agy -p \"{prompt}\" or antigravity chat \"{prompt}\")"

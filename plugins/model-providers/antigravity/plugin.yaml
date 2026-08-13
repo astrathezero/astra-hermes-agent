@@ -1,0 +1,4 @@
+name: antigravity
+kind: model-provider
+version: 1.0.0
+description: "Antigravity / agy Local Bridge Provider (OpenAI REST API Bridge)"
