@@ -112,27 +112,31 @@ def execute_cli_command(
     timeout: float = 180.0,
 ) -> str:
     """Execute local CLI command with prompt substitution or stdin piping."""
-    if "{prompt}" in cmd_template:
-        cmd_str = cmd_template.replace("{prompt}", prompt_text)
-        logger.info("Executing CLI command: %s", cmd_str[:120])
-        proc = subprocess.run(
-            cmd_str,
-            shell=True,
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    else:
-        logger.info("Executing CLI via stdin: %s", cmd_template)
-        proc = subprocess.run(
-            cmd_template,
-            shell=True,
-            input=prompt_text,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+    devnull_f = open(os.devnull, "r")
+    try:
+        if "{prompt}" in cmd_template:
+            cmd_str = cmd_template.replace("{prompt}", prompt_text)
+            logger.info("Executing CLI command: %s", cmd_str[:120])
+            proc = subprocess.run(
+                cmd_str,
+                shell=True,
+                stdin=devnull_f,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        else:
+            logger.info("Executing CLI via stdin: %s", cmd_template)
+            proc = subprocess.run(
+                cmd_template,
+                shell=True,
+                input=prompt_text,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+    finally:
+        devnull_f.close()
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
