@@ -30,6 +30,28 @@ This standalone service acts as a local OpenAI REST API server (`http://127.0.0.
 | `claude-sonnet-4.6-thinking` | `--model claude-sonnet-4.6` | Claude Sonnet 4.6 (Thinking) |
 | `claude-opus-4.6-thinking` | `--model claude-opus-4.6` | Claude Opus 4.6 (Thinking) |
 | `gpt-oss-120b-medium` | `--model gpt-oss-120b --effort medium` | GPT-OSS 120B (Medium Reasoning) |
+| `imagen-3.0-generate-002` | Imagen 3 API | Google Imagen 3 Image Generation (`/v1/images/generations`) |
+| `imagen-3.0-fast-generate-001` | Imagen 3 Fast API | Google Imagen 3 Fast Image Generation (`/v1/images/generations`) |
+
+---
+
+## Image Generation (`/v1/images/generations`)
+
+The bridge server supports standard OpenAI Image Generation API format backed by Google Imagen 3:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-antigravity" \
+  -d '{
+    "model": "imagen-3.0-generate-002",
+    "prompt": "A futuristic cybernetic city at night with neon lights",
+    "size": "1024x1024",
+    "n": 1
+  }'
+```
+*Note: Ensure `GEMINI_API_KEY` or `GOOGLE_API_KEY` is exported in your environment or present in `~/.hermes/.env`.*
+
 
 ---
 

@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
 import json
 import logging
@@ -29,10 +30,13 @@ import shlex
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Dict, List, Optional, Tuple
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +63,28 @@ SUPPORTED_MODELS = {
     "claude-opus-4.6": ("claude-opus-4.6", None),
     "gpt-oss-120b-medium": ("gpt-oss-120b", "medium"),
     "gpt-oss-120b": ("gpt-oss-120b", None),
+    "imagen-3.0-generate-002": ("imagen-3.0-generate-002", None),
+    "imagen-3.0-fast-generate-001": ("imagen-3.0-fast-generate-001", None),
+    "imagen-3": ("imagen-3.0-generate-002", None),
 }
+
+IMAGE_SIZE_TO_ASPECT_RATIO = {
+    "1024x1024": "1:1",
+    "512x512": "1:1",
+    "1792x1024": "16:9",
+    "1920x1080": "16:9",
+    "1280x720": "16:9",
+    "16:9": "16:9",
+    "1024x1792": "9:16",
+    "1080x1920": "9:16",
+    "720x1280": "9:16",
+    "9:16": "9:16",
+    "1024x768": "4:3",
+    "4:3": "4:3",
+    "768x1024": "3:4",
+    "3:4": "3:4",
+}
+
 
 
 def detect_cli_command() -> Tuple[str, str]:
@@ -343,7 +368,113 @@ def execute_cli_with_fallback(
     raise RuntimeError(f"All agy profile execution attempts failed. Details: {'; '.join(errors)}")
 
 
+def resolve_gemini_api_key(client_key: Optional[str] = None) -> str:
+    """Resolve Gemini / Google AI API key from client header, environment, or config files."""
+    if client_key and (client_key.startswith("AIza") or len(client_key) > 30):
+        return client_key
+
+    for env_var in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTIGRAVITY_BRIDGE_GEMINI_KEY"):
+        val = os.environ.get(env_var, "").strip()
+        if val:
+            return val
+
+    # Try reading ~/.hermes/.env if present
+    hermes_env_path = os.path.expanduser("~/.hermes/.env")
+    if os.path.exists(hermes_env_path):
+        try:
+            with open(hermes_env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k in ("GEMINI_API_KEY", "GOOGLE_API_KEY") and v:
+                        return v
+        except Exception:
+            pass
+
+    if client_key and client_key not in ("sk-antigravity", "local", "test"):
+        return client_key
+
+    raise RuntimeError(
+        "Gemini API key not found. Please set GEMINI_API_KEY or GOOGLE_API_KEY in environment or ~/.hermes/.env"
+    )
+
+
+def generate_image_with_imagen(
+    prompt: str,
+    model: str = "imagen-3.0-generate-002",
+    sample_count: int = 1,
+    aspect_ratio: str = "1:1",
+    output_mime_type: str = "image/jpeg",
+    api_key: Optional[str] = None,
+    timeout: float = 120.0,
+) -> List[Dict[str, Any]]:
+    """Call Google AI Imagen 3 REST API endpoint to generate images and return OpenAI format data list."""
+    if not api_key:
+        api_key = resolve_gemini_api_key()
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:predict"
+    payload = {
+        "instances": [
+            {"prompt": prompt}
+        ],
+        "parameters": {
+            "sampleCount": sample_count,
+            "aspectRatio": aspect_ratio,
+            "outputOptions": {
+                "mimeType": output_mime_type
+            }
+        }
+    }
+
+    req_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=req_bytes,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST"
+    )
+
+    logger.info("Calling Google Imagen 3 API (model=%s, aspect_ratio=%s, count=%d)...", model, aspect_ratio, sample_count)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp_body = resp.read().decode("utf-8")
+            data = json.loads(resp_body)
+    except urllib.error.HTTPError as exc:
+        err_msg = exc.read().decode("utf-8", errors="replace")
+        logger.error("Google Imagen API HTTPError %d: %s", exc.code, err_msg)
+        raise RuntimeError(f"Google Imagen API Error ({exc.code}): {err_msg}")
+    except Exception as exc:
+        logger.error("Failed to connect to Google Imagen API: %s", exc)
+        raise RuntimeError(f"Failed to connect to Google Imagen API: {exc}")
+
+    predictions = data.get("predictions", [])
+    if not predictions:
+        raise RuntimeError("Google Imagen API returned no image predictions")
+
+    results: List[Dict[str, Any]] = []
+    for pred in predictions:
+        b64_img = pred.get("bytesBase64Encoded")
+        if b64_img:
+            results.append({
+                "b64_json": b64_img,
+                "revised_prompt": prompt,
+            })
+
+    if not results:
+        raise RuntimeError("No valid base64 image data found in Google Imagen response")
+
+    return results
+
+
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+
     """Multi-threaded HTTP server for handling concurrent API calls."""
     daemon_threads = True
     allow_reuse_address = True
@@ -425,8 +556,9 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
             path = self.path.split("?")[0].rstrip("/")
             is_anthropic = path in ("/v1/messages", "/messages")
             is_openai = path in ("/v1/chat/completions", "/chat/completions")
+            is_image_gen = path in ("/v1/images/generations", "/images/generations")
 
-            if not (is_openai or is_anthropic):
+            if not (is_openai or is_anthropic or is_image_gen):
                 self._send_json_response({"error": "Not Found"}, status_code=404)
                 return
 
@@ -464,6 +596,68 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            # --- Handle Image Generation format (/v1/images/generations) ---
+            if is_image_gen:
+                prompt = req_json.get("prompt")
+                if not prompt or not isinstance(prompt, str) or not prompt.strip():
+                    self._send_json_response(
+                        {"error": {"message": "'prompt' field is required and must be a non-empty string", "type": "invalid_request_error"}},
+                        status_code=400,
+                    )
+                    return
+
+                raw_model = (req_json.get("model") or "imagen-3.0-generate-002").strip()
+                if raw_model in ("imagen-3", "imagen"):
+                    img_model = "imagen-3.0-generate-002"
+                elif raw_model in SUPPORTED_MODELS and raw_model.startswith("imagen-"):
+                    img_model = raw_model
+                else:
+                    img_model = raw_model
+
+                try:
+                    n = max(1, min(int(req_json.get("n", 1)), 4))
+                except (ValueError, TypeError):
+                    n = 1
+
+                size = req_json.get("size")
+                aspect_ratio = req_json.get("aspect_ratio")
+                if not aspect_ratio and size:
+                    aspect_ratio = IMAGE_SIZE_TO_ASPECT_RATIO.get(str(size), "1:1")
+                if not aspect_ratio:
+                    aspect_ratio = "1:1"
+
+                output_mime = req_json.get("output_mime_type") or "image/jpeg"
+                if output_mime not in ("image/jpeg", "image/png"):
+                    output_mime = "image/jpeg"
+
+                auth_header = self.headers.get("Authorization", "")
+                auth_token = ""
+                if auth_header.startswith("Bearer "):
+                    auth_token = auth_header[7:].strip()
+
+                try:
+                    resolved_key = resolve_gemini_api_key(client_key=auth_token)
+                    image_results = generate_image_with_imagen(
+                        prompt=prompt.strip(),
+                        model=img_model,
+                        sample_count=n,
+                        aspect_ratio=aspect_ratio,
+                        output_mime_type=output_mime,
+                        api_key=resolved_key,
+                    )
+                    self._send_json_response({
+                        "created": int(time.time()),
+                        "data": image_results,
+                    })
+                    return
+                except Exception as exc:
+                    logger.error("Image generation failed: %s", exc)
+                    self._send_json_response(
+                        {"error": {"message": str(exc), "type": "api_error"}},
+                        status_code=500,
+                    )
+                    return
+
             messages = req_json.get("messages", [])
             if not isinstance(messages, list):
                 self._send_json_response(
@@ -471,6 +665,7 @@ class AntigravityBridgeHandler(BaseHTTPRequestHandler):
                     status_code=400,
                 )
                 return
+
 
             # Handle Anthropic system prompt format
             system_prompt = req_json.get("system")
